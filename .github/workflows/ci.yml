@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    # Real Postgres + Redis for the e2e suite. Unit tests (*.spec.ts) are
+    # fully mocked and don't touch these, but they're cheap to run
+    # alongside so one job covers everything.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: miniopenfx
+          POSTGRES_PASSWORD: miniopenfx
+          POSTGRES_DB: miniopenfx
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U miniopenfx"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://miniopenfx:miniopenfx@localhost:5432/miniopenfx
+      REDIS_URL: redis://localhost:6379
+      SEED_CLIENT_API_KEY: ci-test-api-key-not-a-secret
+      BINANCE_BASE_URL: https://api.binance.com
+      PRICE_CACHE_TTL_MS: 1500
+      PRICING_TIMEOUT_MS: 2000
+      PRICING_MAX_RETRIES: 1
+      DEFAULT_QUOTE_TTL_SECONDS: 15
+      QUOTE_SPREAD_BPS: 10
+      ENABLE_DEV_DEPOSITS: "true"
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run database migrations
+        run: npm run db:migrate
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: e2e tests
+        run: npm run test:e2e
